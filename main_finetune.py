@@ -30,7 +30,7 @@ from iopath.common.file_io import g_pathmgr as pathmgr
 from mae_st.engine_finetune import evaluate, train_one_epoch
 
 from mae_st.util.decoder.mixup import MixUp as MixVideo
-from mae_st.util.kinetics import Kinetics
+from mae_st.util.dataset import Kinetics
 from mae_st.util.logging import master_print as print
 from mae_st.util.misc import NativeScalerWithGradNormCount as NativeScaler
 from mae_st.util.pos_embed import interpolate_pos_embed
