@@ -194,10 +194,29 @@ class MaskedAutoencoderViT(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
+
+    def visualize_debug(self, orgn, ids_keep):
+        self.t_pred_patch_size = 2
+        t = self.patchify(orgn)
+        idx_0 = [i for i in range(t.shape[1]) if i not in ids_keep[0]]
+        idx_1 = [i for i in range(t.shape[1]) if i not in ids_keep[1]]
+        t[0, idx_0] = 0
+        t[1, idx_1] = 0
+        t = self.unpatchify(t, visualize=True)
+        import matplotlib.pyplot as plt
+        for i in range(t.shape[2]):
+            plt.imshow(t[0, 0, i].cpu().numpy(), cmap="gray")
+            plt.savefig(f"samples/{i}_masked.png")
+            plt.close()
+            plt.imshow(orgn[0, 0, i].cpu().numpy(), cmap="gray")
+            plt.savefig(f"samples/{i}_orgn.png")
+            plt.close()
+
+
     def patchify(self, imgs):
         """
-        imgs: (N, 3, H, W)
-        x: (N, L, patch_size**2 *3)
+        imgs: (N, 1, H, W)
+        x: (N, L, patch_size**2)
         """
         N, _, T, H, W = imgs.shape
         p = self.patch_embed.patch_size[0]
@@ -206,23 +225,25 @@ class MaskedAutoencoderViT(nn.Module):
         h = w = H // p
         t = T // u
 
-        x = imgs.reshape(shape=(N, 3, t, u, h, p, w, p))
+        x = imgs.reshape(shape=(N, 1, t, u, h, p, w, p))
         x = torch.einsum("nctuhpwq->nthwupqc", x)
-        x = x.reshape(shape=(N, t * h * w, u * p**2 * 3))
+        x = x.reshape(shape=(N, t * h * w, u * p**2))
         self.patch_info = (N, T, H, W, p, u, t, h, w)
         return x
 
-    def unpatchify(self, x):
+    def unpatchify(self, x, visualize=False):
         """
-        x: (N, L, patch_size**2 *3)
-        imgs: (N, 3, H, W)
+        x: (N, L, patch_size**2)
+        imgs: (N, 1, H, W)
         """
         N, T, H, W, p, u, t, h, w = self.patch_info
+        if visualize:
+            u = self.patch_embed.t_patch_size
 
-        x = x.reshape(shape=(N, t, h, w, u, p, p, 3))
+        x = x.reshape(shape=(N, t, h, w, u, p, p, 1))
 
         x = torch.einsum("nthwupqc->nctuhpwq", x)
-        imgs = x.reshape(shape=(N, 3, T, H, W))
+        imgs = x.reshape(shape=(N, 1, T, H, W))
         return imgs
 
     def random_masking(self, x, mask_ratio):
@@ -253,16 +274,62 @@ class MaskedAutoencoderViT(nn.Module):
         mask = torch.gather(mask, dim=1, index=ids_restore)
 
         return x_masked, mask, ids_restore, ids_keep
+    
+    def random_body_masking(self, x, mask_ratio, bodymask=None):
+        """
+        Perform per-sample random masking by per-sample shuffling.
+        Per-sample shuffling is done by argsort random noise. Masking is done on the body only, ignoring the irrelevant background. A patch can only be masked if more than half of its pixels are in the body.
+        x: [N, L, D], sequence
+        mask_ratio: ratio of patches to be masked
+        bodymask: [N, 1, D, H, W], body mask (1 for body, 0 for background)
+        """
+        N, L, D = x.shape  # batch, length, dim
+        patch_size = self.patch_embed.patch_size[0]
+        t_patch_size = self.patch_embed.t_patch_size
 
-    def forward_encoder(self, x, mask_ratio):
+        bodymask = bodymask.unfold(2, t_patch_size, t_patch_size).unfold(3, patch_size, patch_size).unfold(4, patch_size, patch_size).reshape(N, -1, t_patch_size * patch_size * patch_size) # (N, T*L, t_patch_size * patch_size * patch_size)
+        bodymask = bodymask.sum(dim=-1) # (N, T*L) each element is the number of body pixels in the patch
+        bodymask = bodymask > (t_patch_size * patch_size * patch_size / 2) # (N, T*L) each element is True if more than half of the pixels in the patch are body pixels
+
+        L_eff = bodymask.sum(dim=-1).float().mean()
+        len_keep = int(L_eff * (1 - mask_ratio))
+        # keep means the patches to be kept in the sequence for training -- the patches to be masked are removed from the sequence. We mask out the non-body patches + 0.75 * body patches.
+
+        noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
+        bodymask = bodymask.float().to(x.device)
+        noise[~bodymask.bool()] = 10 # set the noise of non-body patches to 10 so that they are not masked out
+
+        # sort noise for each sample
+        ids_shuffle = torch.argsort(
+            noise, dim=1
+        )  # ascend: small is keep, large is remove
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        # keep the first subset
+        ids_keep = ids_shuffle[:, :len_keep]
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
+
+        # generate the binary mask: 0 is keep, 1 is remove
+        mask = torch.ones([N, L], device=x.device)
+        mask[:, :len_keep] = 0
+        # unshuffle to get the binary mask
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+
+        return x_masked, mask, ids_restore, ids_keep
+
+
+        
+
+    def forward_encoder(self, x, mask_ratio, bodymask=None):
         # embed patches
+        orgn = x.clone()
         x = self.patch_embed(x)
         N, T, L, C = x.shape
 
         x = x.reshape(N, T * L, C)
 
         # masking: length -> length * mask_ratio
-        x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
+        x, mask, ids_restore, ids_keep = self.random_body_masking(x, mask_ratio, bodymask)
         x = x.view(N, -1, C)
         # append cls token
         if self.cls_embed:
@@ -428,9 +495,8 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, mask_ratio=0.75):
-        import pdb; pdb.set_trace()
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
+    def forward(self, imgs, mask_ratio=0.75, bodymasks=None):
+        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, bodymasks)
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask

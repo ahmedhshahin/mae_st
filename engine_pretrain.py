@@ -73,6 +73,7 @@ def train_one_epoch(
             loss, _, _ = model(
                 sequence,
                 mask_ratio=args.mask_ratio,
+                bodymasks=mask,
             )
 
         loss_value = loss.item()
