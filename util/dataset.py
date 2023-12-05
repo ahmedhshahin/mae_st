@@ -241,6 +241,7 @@ class CTData(torch.utils.data.Dataset):
         std=(1),
         store_data_to_tmpfs=False,
         n=-1,
+        seed=0,
     ) -> None:
         """
         Construct the CT scan loader.
@@ -256,6 +257,7 @@ class CTData(torch.utils.data.Dataset):
             std (float): standard deviation of the training set.
             store_data_to_tmpfs (bool): whether to store the data to tmpfs. We do this before running the training to speed up the training. Make sure you have enough space in tmpfs (RAM).
             n (int): number of CT scans to load. If n is negative, load all the CT scans. For debugging purposes.
+            seed (int): random seed.
         """
         self.num_slices = num_slices
         self.mode = mode
@@ -269,8 +271,8 @@ class CTData(torch.utils.data.Dataset):
         ], f"Split {mode} not supported for CT"
 
         df = pd.read_csv(path_to_df)
-        pids = df.loc[df["Imaging ok and thickness < 3 mm"] == 1, "Patient id"].unique()
-        # TODO: Fix seed
+        pids = df.loc[df["Imaging OK and thickness < 3 mm"] == 1, "PATIENT ID"].unique()
+        np.random.seed(seed)
         np.random.shuffle(pids)
         n_train = int(len(pids) * 0.8)
         n_val = int(len(pids) * 0.1)
@@ -282,7 +284,7 @@ class CTData(torch.utils.data.Dataset):
             pids = pids[n_train + n_val :]
         pids = pids[:n] if n > 0 else pids
         pid_sids = df.loc[
-            df["Patient id"].isin(pids) & df["Imaging ok and thickness < 3 mm"] == 1,
+            df["PATIENT ID"].isin(pids) & df["Imaging OK and thickness < 3 mm"] == 1,
             "pid_sid",
         ].values
 
@@ -306,7 +308,7 @@ class CTData(torch.utils.data.Dataset):
 
         Args:
             path_to_data_dir (string): path to the data directory that contains the CT scans.
-            pid_sids (list): list of patient ids.
+            pid_sids (list): list of PATIENT IDs.
         """
         print("Storing data to tmpfs...")
         tmpfs_dir = "/dev/shm/ct_data"

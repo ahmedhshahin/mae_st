@@ -14,19 +14,19 @@ import json
 import os
 import time
 
-import mae_st.util.env
+import util.env
 
-import mae_st.util.misc as misc
+import util.misc as misc
 
 import numpy as np
 import timm
 import torch
 import torch.backends.cudnn as cudnn
 from iopath.common.file_io import g_pathmgr as pathmgr
-from mae_st import models_mae
-from mae_st.engine_pretrain import train_one_epoch
-from mae_st.util.kinetics import Kinetics
-from mae_st.util.misc import NativeScalerWithGradNormCount as NativeScaler
+import models_mae
+from engine_pretrain import train_one_epoch
+from util.dataset import CTData
+from util.misc import NativeScalerWithGradNormCount as NativeScaler
 from tensorboard.compat.tensorflow_stub.io.gfile import register_filesystem
 from torch.utils.tensorboard import SummaryWriter
 
@@ -56,7 +56,7 @@ def get_args_parser():
         help="Name of model to train",
     )
 
-    parser.add_argument("--input_size", default=224, type=int, help="images input size")
+    parser.add_argument("--input_size", default=256, type=int, help="images input size")
 
     parser.add_argument(
         "--mask_ratio",
@@ -105,7 +105,18 @@ def get_args_parser():
     parser.add_argument(
         "--path_to_data_dir",
         default="",
-        help="path where to save, empty for no saving",
+        help="path to the CT data directory",
+    )
+    parser.add_argument(
+        "--path_to_df",
+        default="",
+        help="path to the dataframe with clinical information",
+    )
+    parser.add_argument(
+        "--n",
+        default=-1,
+        type=int,
+        help="number of patients to use, -1 for all",
     )
     parser.add_argument(
         "--output_dir",
@@ -152,7 +163,7 @@ def get_args_parser():
     parser.add_argument("--decoder_depth", default=8, type=int)
     parser.add_argument("--decoder_num_heads", default=16, type=int)
     parser.add_argument("--t_patch_size", default=2, type=int)
-    parser.add_argument("--num_frames", default=16, type=int)
+    parser.add_argument("--num_slices", default=16, type=int)
     parser.add_argument("--checkpoint_period", default=1, type=int)
     parser.add_argument("--sampling_rate", default=4, type=int)
     parser.add_argument("--distributed", action="store_true")
@@ -207,8 +218,8 @@ def get_args_parser():
 def main(args):
     misc.init_distributed_mode(args)
 
-    print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
-    print("{}".format(args).replace(", ", ",\n"))
+    print(f"job dir: {os.path.dirname(os.path.realpath(__file__))}")
+    print(f"{args}".replace(" ", ",\n"))
 
     device = torch.device(args.device)
 
@@ -219,15 +230,13 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train = Kinetics(
-        mode="pretrain",
+    dataset_train = CTData(
         path_to_data_dir=args.path_to_data_dir,
-        sampling_rate=args.sampling_rate,
-        num_frames=args.num_frames,
-        train_jitter_scales=(256, 320),
-        repeat_aug=args.repeat_aug,
-        jitter_aspect_relative=args.jitter_aspect_relative,
-        jitter_scales_relative=args.jitter_scales_relative,
+        path_to_df=args.path_to_df,
+        mode="train",
+        num_slices=args.num_slices,
+        n=args.n,
+        seed=args.seed,
     )
     if args.distributed:
         num_tasks = misc.get_world_size()

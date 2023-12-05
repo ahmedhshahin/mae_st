@@ -14,8 +14,8 @@ from functools import partial
 
 import torch
 import torch.nn as nn
-from mae_st.util import video_vit
-from mae_st.util.logging import master_print as print
+from util import video_vit
+from util.logging import master_print as print
 
 
 class MaskedAutoencoderViT(nn.Module):
@@ -23,9 +23,9 @@ class MaskedAutoencoderViT(nn.Module):
 
     def __init__(
         self,
-        img_size=224,
+        img_size=256,
         patch_size=16,
-        in_chans=3,
+        in_chans=1,
         embed_dim=1024,
         depth=24,
         num_heads=16,
@@ -35,7 +35,7 @@ class MaskedAutoencoderViT(nn.Module):
         mlp_ratio=4.0,
         norm_layer=nn.LayerNorm,
         norm_pix_loss=False,
-        num_frames=16,
+        num_slices=16,
         t_patch_size=4,
         patch_embed=video_vit.PatchEmbed,
         no_qkv_bias=False,
@@ -50,14 +50,14 @@ class MaskedAutoencoderViT(nn.Module):
         self.sep_pos_embed = sep_pos_embed
         self.cls_embed = cls_embed
         self.pred_t_dim = pred_t_dim
-        self.t_pred_patch_size = t_patch_size * pred_t_dim // num_frames
+        self.t_pred_patch_size = t_patch_size * pred_t_dim // num_slices
 
         self.patch_embed = patch_embed(
             img_size,
             patch_size,
             in_chans,
             embed_dim,
-            num_frames,
+            num_slices,
             t_patch_size,
         )
         num_patches = self.patch_embed.num_patches
@@ -429,6 +429,7 @@ class MaskedAutoencoderViT(nn.Module):
         return loss
 
     def forward(self, imgs, mask_ratio=0.75):
+        import pdb; pdb.set_trace()
         latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
         loss = self.forward_loss(imgs, pred, mask)

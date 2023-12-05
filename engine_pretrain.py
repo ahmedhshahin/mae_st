@@ -11,8 +11,8 @@
 import math
 from typing import Iterable
 
-import mae_st.util.lr_sched as lr_sched
-import mae_st.util.misc as misc
+import util.lr_sched as lr_sched
+import util.misc as misc
 import torch
 from iopath.common.file_io import g_pathmgr as pathmgr
 
@@ -53,7 +53,7 @@ def train_one_epoch(
     if log_writer is not None:
         print("log_dir: {}".format(log_writer.log_dir))
 
-    for data_iter_step, (samples, _) in enumerate(
+    for data_iter_step, samples in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):
         # we use a per iteration (instead of per epoch) lr scheduler
@@ -62,14 +62,16 @@ def train_one_epoch(
                 optimizer, data_iter_step / len(data_loader) + epoch, args
             )
 
-        samples = samples.to(device, non_blocking=True)
-        if len(samples.shape) == 6:
-            b, r, c, t, h, w = samples.shape
-            samples = samples.reshape(b * r, c, t, h, w)
-
+        sequence = samples["sequence"]
+        mask     = samples["mask"]
+        sequence = sequence.to(device, non_blocking=True)
+        if len(sequence.shape) == 6:
+            b, r, c, t, h, w = sequence.shape
+            sequence = sequence.reshape(b * r, c, t, h, w)
+        
         with torch.cuda.amp.autocast(enabled=not fp32):
             loss, _, _ = model(
-                samples,
+                sequence,
                 mask_ratio=args.mask_ratio,
             )
 
