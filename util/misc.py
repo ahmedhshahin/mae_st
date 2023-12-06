@@ -8,7 +8,7 @@
 # DeiT: https://github.com/facebookresearch/deit
 # BEiT: https://github.com/microsoft/unilm/tree/master/beit
 # --------------------------------------------------------
-
+# pylint: disable=no-member
 import builtins
 import datetime
 import math

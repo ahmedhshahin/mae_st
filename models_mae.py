@@ -9,7 +9,7 @@
 # DeiT: https://github.com/facebookresearch/deit
 # MAE: https://github.com/facebookresearch/mae
 # --------------------------------------------------------
-
+# pylint: disable=no-member
 from functools import partial
 
 import torch
@@ -322,7 +322,6 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward_encoder(self, x, mask_ratio, bodymask=None):
         # embed patches
-        orgn = x.clone()
         x = self.patch_embed(x)
         N, T, L, C = x.shape
 
