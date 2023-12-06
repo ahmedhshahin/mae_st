@@ -318,6 +318,8 @@ class CTData(torch.utils.data.Dataset):
             path = glob(os.path.join(path_to_data_dir, pid_sid + "*"))
             assert len(path) == 1, f"{pid_sid} not found"
             path = path[0]
+            if os.path.exists(os.path.join(tmpfs_dir, os.path.basename(path))):
+                continue
             shutil.copy(path, tmpfs_dir)
         print("Done!")
 

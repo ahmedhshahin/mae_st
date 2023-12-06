@@ -1,0 +1,22 @@
+python3 -m torch.distributed.run --nproc_per_node=$WORLD_SIZE run_pretrain.py \
+ --path_to_data_dir /SAN/medic/IPF/segmentations/osic_mar_23_unpadded/ \
+ --path_to_df /home/ashahin/codes/Llava_lung/clinical_data/clinical_data_VLMs.csv \
+ --model mae_vit_large_patch16 \
+ --num_slices 16 \
+ --decoder_embed_dim 512 \
+ --decoder_depth 4 \
+ --pin_mem \
+ --blr 1.6e-3 \
+ --log_dir ./output_dir \
+ --batch_size 16 \
+ --mask_ratio 0.9 \
+ --norm_pix_loss \
+ --pred_t_dim 8 \
+ --clip_grad 0.02 \
+ --warmup_epochs 5 \
+ --epochs 400 \
+ --output_dir /SAN/medic/IPF/mae_st_exps/mae_st1 \
+ --num_workers 8 \
+ --checkpoint_period 20 \
+ --distributed \
+ --accum_iter 2 \
