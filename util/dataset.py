@@ -16,7 +16,7 @@ import torch
 import torch.utils.data
 from torchvision import transforms
 from scipy import ndimage
-import skimage
+import skimage.measure
 import pandas as pd
 
 

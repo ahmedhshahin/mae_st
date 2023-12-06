@@ -22,11 +22,13 @@ import numpy as np
 import timm
 import torch
 import torch.backends.cudnn as cudnn
+import torch.distributed as dist
 from iopath.common.file_io import g_pathmgr as pathmgr
 import models_mae
 from engine_pretrain import train_one_epoch
 from util.dataset import CTData
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
+from util.logging import is_master_proc
 from tensorboard.compat.tensorflow_stub.io.gfile import register_filesystem
 from torch.utils.tensorboard import SummaryWriter
 
@@ -113,7 +115,7 @@ def get_args_parser():
         help="path to the dataframe with clinical information",
     )
     parser.add_argument(
-        "--n",
+        "--n_patients",
         default=-1,
         type=int,
         help="number of patients to use, -1 for all",
@@ -218,6 +220,20 @@ def get_args_parser():
 def main(args):
     misc.init_distributed_mode(args)
 
+    # store data in TMPFS
+    if is_master_proc():
+        _ = CTData(
+            args.path_to_data_dir,
+            args.path_to_df,
+            mode="train",
+            num_slices=args.num_slices,
+            n=args.n_patients,
+            store_data_to_tmpfs=True,
+            seed=args.seed,
+        )
+    # wait for master to finish
+    dist.barrier()
+
     print(f"job dir: {os.path.dirname(os.path.realpath(__file__))}")
     print(f"{args}".replace(" ", ",\n"))
 
@@ -235,7 +251,7 @@ def main(args):
         path_to_df=args.path_to_df,
         mode="train",
         num_slices=args.num_slices,
-        n=args.n,
+        n=args.n_patients,
         seed=args.seed,
     )
     if args.distributed:
