@@ -3,3 +3,4 @@ output_dir
 samples*
 launch.json
 submit.sh
+*.log
