@@ -232,7 +232,8 @@ def main(args):
             seed=args.seed,
         )
     # wait for master to finish
-    dist.barrier()
+    if args.distributed:
+        dist.barrier()
 
     print(f"job dir: {os.path.dirname(os.path.realpath(__file__))}")
     print(f"{args}".replace(" ", ",\n"))

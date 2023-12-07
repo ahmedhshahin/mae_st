@@ -5,3 +5,4 @@ launch.json
 submit.sh
 *.log
 events*
+*.pth
