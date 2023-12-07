@@ -69,7 +69,6 @@ def show_two_sequences(sequence1, sequence2):
         axs[1].axis("off")
         ims.append([im1, im2])
     ani = animation.ArtistAnimation(fig, ims, interval=500, blit=True, repeat=False)
-    plt.show()
 
 
 def simple_bodymask(img):
@@ -233,7 +232,8 @@ class CTData(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        path_to_data_dir,
+        path_to_osic_data_dir,
+        path_to_lsut_data_dir,
         path_to_df,
         mode,
         num_slices=16,
@@ -247,7 +247,8 @@ class CTData(torch.utils.data.Dataset):
         Construct the CT scan loader.
 
         Args:
-            path_to_data_dir (string): path to the data directory that contains the CT scans.
+            path_to_osic_data_dir (string): path to the data directory that contains the osic CT scans.
+            path_to_lsut_data_dir (string): path to the data directory that contains the lsut CT scans.
             path_to_df (string): path to the csv file that contains the clinical information of the CT scans.
             mode (string): Options includes `train`, `val`, or `test` mode.
                 For the train and val mode, the data loader will take data from the train or val set, and sample one sequence per CT scan.
@@ -271,7 +272,7 @@ class CTData(torch.utils.data.Dataset):
         ], f"Split {mode} not supported for CT"
 
         df = pd.read_csv(path_to_df)
-        pids = df.loc[df["Imaging OK and thickness < 3 mm"] == 1, "PATIENT ID"].unique()
+        pids = df.loc[df["Imaging ok and thickness < 3 mm"], "Patient id"].unique()
         np.random.seed(seed)
         np.random.shuffle(pids)
         n_train = int(len(pids) * 0.8)
@@ -283,44 +284,44 @@ class CTData(torch.utils.data.Dataset):
         else:
             pids = pids[n_train + n_val :]
         pids = pids[:n] if n > 0 else pids
-        pid_sids = df.loc[
-            df["PATIENT ID"].isin(pids) & df["Imaging OK and thickness < 3 mm"] == 1,
-            "pid_sid",
-        ].values
 
         if store_data_to_tmpfs:
-            self._store_data_to_tmpfs(path_to_data_dir, pid_sids)
+            self._store_data_to_tmpfs(path_to_osic_data_dir, path_to_lsut_data_dir, pids)
 
         path_to_data_dir = "/dev/shm/ct_data"
         self._paths = []
-        for pid in pid_sids:
-            path = glob(os.path.join(path_to_data_dir, pid + "*"))
-            assert len(path) == 1
-            path = path[0]
-            self._paths.append(path)
-        print(f"{self.mode} set size: {len(pid_sids)}")
+        n_scans = 0
+        for pid in pids:
+            paths = glob(os.path.join(path_to_data_dir, pid + "*"))
+            assert len(paths) in [1, 2], f"{pid} has {len(paths)} CT scans in the tmpfs"
+            n_scans += len(paths)
+            self._paths.extend(paths)
+        print(f"{self.mode} set size: {len(pids)} patients, {n_scans} CT scans")
 
         self.transforms = transforms.Compose([ToTensor()])
 
-    def _store_data_to_tmpfs(self, path_to_data_dir, pid_sids):
+    def _store_data_to_tmpfs(self, path_to_osic_data_dir, path_to_lsut_data_dir, pids):
         """
         Store the data to tmpfs to speed up the training.
 
         Args:
             path_to_data_dir (string): path to the data directory that contains the CT scans.
-            pid_sids (list): list of PATIENT IDs.
+            pid_sids (list): list of Patient ids.
         """
         print("Storing data to tmpfs...")
         tmpfs_dir = "/dev/shm/ct_data"
         if not os.path.exists(tmpfs_dir):
             os.mkdir(tmpfs_dir)
-        for pid_sid in pid_sids:
-            path = glob(os.path.join(path_to_data_dir, pid_sid + "*"))
-            assert len(path) == 1, f"{pid_sid} not found"
-            path = path[0]
-            if os.path.exists(os.path.join(tmpfs_dir, os.path.basename(path))):
-                continue
-            shutil.copy(path, tmpfs_dir)
+        for pid in pids:
+            if pid.startswith("UCLH"):
+                paths = glob(os.path.join(path_to_lsut_data_dir, pid + "*"))
+            else:
+                paths = glob(os.path.join(path_to_osic_data_dir, pid + "*"))
+            assert len(paths) in [1, 2], f"{pid} has {len(paths)} CT scans"
+            for path in paths:
+                if os.path.exists(os.path.join(tmpfs_dir, os.path.basename(path))):
+                    continue
+                shutil.copy(path, tmpfs_dir)
         print("Done!")
 
     def __getitem__(self, index):
@@ -366,3 +367,31 @@ class CTData(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self._paths)
+
+if __name__ == "__main__":
+    path_to_osic_data_dir = path_to_lsut_data_dir = "/home/ahmed/data/segmentations/osic_mar_23_unpadded/"
+    path_to_df = "ct_data.csv"
+    mode = "train"
+    num_slices = 16
+    mean = 0
+    std = 1
+    n = 2
+    seed = 0
+    dataset = CTData(
+        path_to_osic_data_dir,
+        path_to_lsut_data_dir,
+        path_to_df,
+        mode,
+        num_slices,
+        mean,
+        std,
+        True,
+        n,
+        seed)
+    for i in range(len(dataset)):
+        sample = dataset[i]
+        show_sequence(sample["sequence"][0])
+        plt.show()
+        show_sequence(sample["mask"][0])
+        plt.show()
+        

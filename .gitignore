@@ -6,3 +6,4 @@ submit.sh
 *.log
 events*
 *.pth
+ct_data.csv
