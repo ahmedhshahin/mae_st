@@ -105,9 +105,14 @@ def get_args_parser():
         "--warmup_epochs", type=int, default=40, metavar="N", help="epochs to warmup LR"
     )
     parser.add_argument(
-        "--path_to_data_dir",
+        "--path_to_osic_data_dir",
         default="",
-        help="path to the CT data directory",
+        help="path to the OSIC CT data directory",
+    )
+    parser.add_argument(
+        "--path_to_lsut_data_dir",
+        default="",
+        help="path to the lsut CT data directory",
     )
     parser.add_argument(
         "--path_to_df",
@@ -120,6 +125,8 @@ def get_args_parser():
         type=int,
         help="number of patients to use, -1 for all",
     )
+    parser.add_argument("--mean", default=0.0, type=float)
+    parser.add_argument("--std", default=1.0, type=float)
     parser.add_argument(
         "--output_dir",
         default="./output_dir",
@@ -223,7 +230,8 @@ def main(args):
     # store data in TMPFS
     if is_master_proc():
         _ = CTData(
-            args.path_to_data_dir,
+            args.path_to_osic_data_dir,
+            args.path_to_lsut_data_dir,
             args.path_to_df,
             mode="train",
             num_slices=args.num_slices,
@@ -248,11 +256,14 @@ def main(args):
     cudnn.benchmark = True
 
     dataset_train = CTData(
-        path_to_data_dir=args.path_to_data_dir,
+        path_to_osic_data_dir=args.path_to_osic_data_dir,
+        path_to_lsut_data_dir=args.path_to_lsut_data_dir,
         path_to_df=args.path_to_df,
         mode="train",
         num_slices=args.num_slices,
         n=args.n_patients,
+        mean=args.mean,
+        std=args.std,
         seed=args.seed,
     )
     if args.distributed:

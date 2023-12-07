@@ -1,6 +1,7 @@
 python3 -m torch.distributed.run --nproc_per_node=$WORLD_SIZE run_pretrain.py \
- --path_to_data_dir /SAN/medic/IPF/segmentations/osic_mar_23_unpadded/ \
- --path_to_df /home/ashahin/codes/Llava_lung/clinical_data/clinical_data_VLMs.csv \
+ --path_to_osic_data_dir /SAN/medic/IPF/segmentations/osic_mar_23_unpadded/ \
+ --path_to_lsut_data_dir /cluster/project0/LUST_SSL/lsut_resampled_z256256_lungonly_h5/ \
+ --path_to_df ct_data.csv \
  --model mae_vit_large_patch16 \
  --num_slices 16 \
  --decoder_embed_dim 512 \
@@ -20,3 +21,5 @@ python3 -m torch.distributed.run --nproc_per_node=$WORLD_SIZE run_pretrain.py \
  --checkpoint_period 50 \
  --distributed \
  --accum_iter 2 \
+ --mean 0.6894 \
+ --std 0.3069 \

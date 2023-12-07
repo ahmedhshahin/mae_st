@@ -18,7 +18,8 @@ from torchvision import transforms
 from scipy import ndimage
 import skimage.measure
 import pandas as pd
-
+from multiprocessing import Pool
+from tqdm.contrib.concurrent import process_map
 
 def load_scan(path):
     """
@@ -263,6 +264,8 @@ class CTData(torch.utils.data.Dataset):
         self.num_slices = num_slices
         self.mode = mode
         self.n = n
+        self.mean = mean
+        self.std = std
 
         # Only support train, val, and test mode.
         assert mode in [
@@ -293,36 +296,41 @@ class CTData(torch.utils.data.Dataset):
         n_scans = 0
         for pid in pids:
             paths = glob(os.path.join(path_to_data_dir, pid + "*"))
-            assert len(paths) in [1, 2], f"{pid} has {len(paths)} CT scans in the tmpfs"
+            assert len(paths) in [1, 2, 3, 4], f"{pid} has {len(paths)} CT scans in the tmpfs"
             n_scans += len(paths)
             self._paths.extend(paths)
         print(f"{self.mode} set size: {len(pids)} patients, {n_scans} CT scans")
 
         self.transforms = transforms.Compose([ToTensor()])
 
-    def _store_data_to_tmpfs(self, path_to_osic_data_dir, path_to_lsut_data_dir, pids):
-        """
-        Store the data to tmpfs to speed up the training.
+    def _copy_data(self, args):
+        # Unpack arguments
+        pid, path_to_osic_data_dir, path_to_lsut_data_dir, tmpfs_dir = args
 
-        Args:
-            path_to_data_dir (string): path to the data directory that contains the CT scans.
-            pid_sids (list): list of Patient ids.
-        """
+        if pid.startswith("UCLH"):
+            paths = glob(os.path.join(path_to_lsut_data_dir, pid + "*"))
+        else:
+            paths = glob(os.path.join(path_to_osic_data_dir, pid + "*"))
+        assert len(paths) in [1, 2, 3, 4], f"{pid} has {len(paths)} CT scans"
+        
+        for path in paths:
+            if os.path.exists(os.path.join(tmpfs_dir, os.path.basename(path))):
+                continue
+            shutil.copy(path, tmpfs_dir)
+
+    def _store_data_to_tmpfs(self, path_to_osic_data_dir, path_to_lsut_data_dir, pids):
         print("Storing data to tmpfs...")
         tmpfs_dir = "/dev/shm/ct_data"
         if not os.path.exists(tmpfs_dir):
             os.mkdir(tmpfs_dir)
-        for pid in pids:
-            if pid.startswith("UCLH"):
-                paths = glob(os.path.join(path_to_lsut_data_dir, pid + "*"))
-            else:
-                paths = glob(os.path.join(path_to_osic_data_dir, pid + "*"))
-            assert len(paths) in [1, 2], f"{pid} has {len(paths)} CT scans"
-            for path in paths:
-                if os.path.exists(os.path.join(tmpfs_dir, os.path.basename(path))):
-                    continue
-                shutil.copy(path, tmpfs_dir)
+
+        args = [(pid, path_to_osic_data_dir, path_to_lsut_data_dir, tmpfs_dir) for pid in pids]
+
+        # Use process_map from tqdm
+        process_map(self._copy_data, args, chunksize=1)
+
         print("Done!")
+
 
     def __getitem__(self, index):
         """
@@ -339,14 +347,14 @@ class CTData(torch.utils.data.Dataset):
         if self.mode in ["train", "val"]:
             st_idx = np.random.randint(0, scan.shape[0] - self.num_slices)
             sequence = scan[st_idx : st_idx + self.num_slices]
-            sequence, msk = preprocess_sequence(sequence)
+            sequence, msk = preprocess_sequence(sequence, mean=self.mean, std=self.std)
             sample = {"sequence": sequence, "mask": msk}
             return self.transforms(sample)
 
         sequence, msk = [], []
         for i in range(0, scan.shape[0], self.num_slices):
             _seq = scan[i : i + self.num_slices]
-            _seq, _msk = preprocess_sequence(_seq)
+            _seq, _msk = preprocess_sequence(_seq, mean=self.mean, std=self.std)
             sequence.append(_seq)
             msk.append(_msk)
         if sequence[-1].shape[0] != self.num_slices:
