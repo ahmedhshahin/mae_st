@@ -293,7 +293,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         L_eff = bodymask.sum(dim=-1).float().mean()
         len_keep = int(L_eff * (1 - mask_ratio))
-        # keep means the patches to be kept in the sequence for training -- the patches to be masked are removed from the sequence. We mask out the non-body patches + 0.75 * body patches.
+        # keep means the patches to be kept in the sequence for training -- the patches to be masked are removed from the sequence. We mask out the non-body patches + mask_ratio * body patches.
 
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
         bodymask = bodymask.float().to(x.device)
@@ -499,6 +499,34 @@ class MaskedAutoencoderViT(nn.Module):
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
+    
+    def save_samples_debug(self, pred, imgs, mask, keep_orgn=False):
+        inp = self.patchify(imgs)
+        if keep_orgn:
+            for i in range(mask.shape[0]):
+                for j in range(mask.shape[1]):
+                    if not mask[i, j]:
+                        pred[i, j] = inp[i, j]
+        pred = self.unpatchify(pred)
+        import matplotlib.pyplot as plt
+        for i in range(pred.shape[2]):
+            plt.imshow(pred[0, 0, i].data.cpu().numpy(), cmap="gray")
+            plt.savefig(f"{i}_pred.png")
+            plt.close()
+
+    def get_pred_msk(self, pred, imgs, mask, keep_orgn=False):
+        inp = self.patchify(imgs)
+        msk = torch.zeros_like(inp)
+        if keep_orgn:
+            for i in range(mask.shape[0]):
+                for j in range(mask.shape[1]):
+                    if not mask[i, j]:
+                        pred[i, j] = inp[i, j]
+                        msk[i, j] = inp[i, j]
+        pred = self.unpatchify(pred)
+        msk = self.unpatchify(msk)
+        return pred, msk
+
 
 
 def mae_vit_base_patch16(**kwargs):
