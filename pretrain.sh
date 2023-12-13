@@ -8,18 +8,18 @@ python3 -m torch.distributed.run --nproc_per_node=$WORLD_SIZE run_pretrain.py \
  --decoder_depth 4 \
  --pin_mem \
  --blr 1.6e-3 \
- --log_dir ./output_dir \
- --batch_size 16 \
- --mask_ratio 0.9 \
- --norm_pix_loss \
+ --output_dir /SAN/medic/IPF/mae_st_exps/mae_st_6.4e3_0.75 \
+ --log_dir ./output_dir_6.4e3_0.75 \
+ --batch_size 8 \
+ --mask_ratio 0.75 \
  --pred_t_dim 16 \
  --clip_grad 0.02 \
  --warmup_epochs 5 \
- --epochs 400 \
- --output_dir /SAN/medic/IPF/mae_st_exps/mae_st \
+ --epochs 1000 \
  --num_workers 8 \
  --checkpoint_period 50 \
  --distributed \
  --accum_iter 2 \
  --mean 0.6894 \
  --std 0.3069 \
+ --repeat_aug 1 \
