@@ -165,7 +165,7 @@ def apply_windowing(seq, min_hu=-1350, max_hu=150, mean=0, std=1):
 
 def preprocess_sequence(sequence, min_hu=-1350, max_hu=150, mean=0, std=1):
     """
-    Simple body mask to remove regions, e.g., bed, that are not related to the patient.
+    # Simple body mask to remove regions, e.g., bed, that are not related to the patient.
     Windowing
     Normalization
 
@@ -178,20 +178,21 @@ def preprocess_sequence(sequence, min_hu=-1350, max_hu=150, mean=0, std=1):
     bodymask = np.zeros(sequence.shape)
     for i in range(sequence.shape[0]):
         bodymask[i] = simple_bodymask(sequence[i])
-    bbox = get_bbox(bodymask)  # ymin, ymax, xmin, xmax
-    sequence = sequence[:, bbox[0] : bbox[1], bbox[2] : bbox[3]]
-    bodymask = bodymask[:, bbox[0] : bbox[1], bbox[2] : bbox[3]]
+    # bbox = get_bbox(bodymask)  # ymin, ymax, xmin, xmax
+    # sequence = sequence[:, bbox[0] : bbox[1], bbox[2] : bbox[3]]
+    # bodymask = bodymask[:, bbox[0] : bbox[1], bbox[2] : bbox[3]]
     # we need to keep the aspect ratio, so we pad the shorter side
-    sequence = pad_sequence(sequence)
-    bodymask = pad_sequence(bodymask)
+    # sequence = pad_sequence(sequence)
+    # bodymask = pad_sequence(bodymask)
 
     sequence = apply_windowing(sequence, min_hu, max_hu, mean, std)
-    res = np.zeros((sequence.shape[0], 256, 256))
-    msk = np.zeros((sequence.shape[0], 256, 256), dtype=bool)
-    for i in range(sequence.shape[0]):
-        res[i] = ndimage.zoom(sequence[i], 256 / np.asarray(sequence[i].shape), order=3)
-        msk[i] = ndimage.zoom(bodymask[i], 256 / np.asarray(sequence[i].shape), order=0)
-    return res, msk
+    # res = np.zeros((sequence.shape[0], 256, 256))
+    # msk = np.zeros((sequence.shape[0], 256, 256), dtype=bool)
+    # for i in range(sequence.shape[0]):
+        # res[i] = ndimage.zoom(sequence[i], 256 / np.asarray(sequence[i].shape), order=3)
+        # msk[i] = ndimage.zoom(bodymask[i], 256 / np.asarray(sequence[i].shape), order=0)
+    # return res, msk
+    return sequence, bodymask
 
 
 class ToTensor:
