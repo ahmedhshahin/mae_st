@@ -21,6 +21,7 @@ import pandas as pd
 from multiprocessing import Pool
 from tqdm.contrib.concurrent import process_map
 
+
 def load_scan(path):
     """
     Load a CT scan in the format of .h5 file.
@@ -70,6 +71,7 @@ def show_two_sequences(sequence1, sequence2):
         axs[1].axis("off")
         ims.append([im1, im2])
     ani = animation.ArtistAnimation(fig, ims, interval=500, blit=True, repeat=False)
+    plt.show()
 
 
 def simple_bodymask(img):
@@ -148,22 +150,18 @@ def pad_sequence(sequence):
     return sequence
 
 
-def apply_windowing(seq, min_hu=-1350, max_hu=150, mean=0, std=1):
+def apply_windowing(seq, min_hu=-1350, max_hu=150):
     """
     - Window the image to [min_hu, max_hu] = [-1350, 150]. (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7120362/) -- equvalent to w=1500, l=-600.
     - Normalize the image to [0,1]
-    - Normalizing the image to zero mean and unit variance (precomputed from the training data for each fold, and saved in img_stats)
     """
     min_hu = np.maximum(min_hu, -1024)  # -1024 should be the minimum HU value
     seq = np.clip(seq, min_hu, max_hu)
     seq = (seq - seq.min()) / (seq.max() - seq.min())
-
-    seq -= mean
-    seq /= std
     return seq
 
 
-def preprocess_sequence(sequence, min_hu=-1350, max_hu=150, mean=0, std=1):
+def preprocess_sequence(sequence, min_hu=-1350, max_hu=150):
     """
     # Simple body mask to remove regions, e.g., bed, that are not related to the patient.
     Windowing
@@ -185,12 +183,12 @@ def preprocess_sequence(sequence, min_hu=-1350, max_hu=150, mean=0, std=1):
     # sequence = pad_sequence(sequence)
     # bodymask = pad_sequence(bodymask)
 
-    sequence = apply_windowing(sequence, min_hu, max_hu, mean, std)
+    sequence = apply_windowing(sequence, min_hu, max_hu)
     # res = np.zeros((sequence.shape[0], 256, 256))
     # msk = np.zeros((sequence.shape[0], 256, 256), dtype=bool)
     # for i in range(sequence.shape[0]):
-        # res[i] = ndimage.zoom(sequence[i], 256 / np.asarray(sequence[i].shape), order=3)
-        # msk[i] = ndimage.zoom(bodymask[i], 256 / np.asarray(sequence[i].shape), order=0)
+    # res[i] = ndimage.zoom(sequence[i], 256 / np.asarray(sequence[i].shape), order=3)
+    # msk[i] = ndimage.zoom(bodymask[i], 256 / np.asarray(sequence[i].shape), order=0)
     # return res, msk
     return sequence, bodymask
 
@@ -225,6 +223,80 @@ class ToTensor:
         if value.ndim in [3, 4]:
             return torch.from_numpy(value[None]).type(torch.FloatTensor)
         return torch.from_numpy(value).type(torch.FloatTensor)
+
+
+class GaussianNoise:
+    def __init__(self, p=0.5, mean=0, std=0.05):
+        self.mean = mean
+        self.std = std
+        self.p = p
+
+    def __call__(self, sample):
+        if np.random.rand() > self.p:
+            return sample
+        sequence, mask = sample["sequence"], sample["mask"]
+        noise = np.random.normal(self.mean, self.std, size=sequence.shape)
+        sequence += noise
+        sample = {"sequence": sequence, "mask": mask}
+        return sample
+
+
+class Normalize:
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, sample):
+        sequence, mask = sample["sequence"], sample["mask"]
+        sequence = (sequence - self.mean) / self.std
+        sample = {"sequence": sequence, "mask": mask}
+        return sample
+
+
+class AutoContrast:
+    def __init__(self, p=0.5):
+        # source: torchvision transforms v2 source code
+        self.p = p
+
+    def __call__(self, sample):
+        if np.random.rand() > self.p:
+            return sample
+        def _max_value(dtype: torch.dtype) -> int:
+            if dtype == torch.uint8:
+                return 255
+            elif dtype == torch.int8:
+                return 127
+            elif dtype == torch.int16:
+                return 32767
+            elif dtype == torch.int32:
+                return 2147483647
+            elif dtype == torch.int64:
+                return 9223372036854775807
+            else:
+                # This is only here for completeness. This value is implicitly assumed in a lot of places so changing it is not
+                # easy.
+                return 1
+
+        sequence = sample["sequence"][0]
+        bound = _max_value(sequence.dtype)
+        fp = sequence.is_floating_point()
+        float_image = sequence if fp else sequence.to(torch.float32)
+
+        minimum = float_image.amin(dim=(-2, -1), keepdim=True)
+        maximum = float_image.amax(dim=(-2, -1), keepdim=True)
+
+        eq_idxs = maximum == minimum
+        inv_scale = maximum.sub_(minimum).mul_(1.0 / bound)
+        minimum[eq_idxs] = 0.0
+        inv_scale[eq_idxs] = 1.0
+
+        if fp:
+            diff = float_image.sub(minimum)
+        else:
+            diff = float_image.sub_(minimum)
+        res = diff.div_(inv_scale).clamp_(0, bound).to(sequence.dtype)
+        sample["sequence"] = res.unsqueeze(0)
+        return sample
 
 
 class CTData(torch.utils.data.Dataset):
@@ -290,19 +362,31 @@ class CTData(torch.utils.data.Dataset):
         pids = pids[:n] if n > 0 else pids
 
         if store_data_to_tmpfs:
-            self._store_data_to_tmpfs(path_to_osic_data_dir, path_to_lsut_data_dir, pids)
+            self._store_data_to_tmpfs(
+                path_to_osic_data_dir, path_to_lsut_data_dir, pids
+            )
 
         path_to_data_dir = "/dev/shm/ct_data"
         self._paths = []
         n_scans = 0
         for pid in pids:
             paths = glob(os.path.join(path_to_data_dir, pid + "*"))
-            assert len(paths) in [1, 2, 3, 4], f"{pid} has {len(paths)} CT scans in the tmpfs"
+            assert len(paths) in [
+                1,
+                2,
+                3,
+                4,
+            ], f"{pid} has {len(paths)} CT scans in the tmpfs"
             n_scans += len(paths)
             self._paths.extend(paths)
         print(f"{self.mode} set size: {len(pids)} patients, {n_scans} CT scans")
 
-        self.transforms = transforms.Compose([ToTensor()])
+        self.transforms = transforms.Compose(
+            [GaussianNoise(),
+             ToTensor(),
+             AutoContrast(),
+             Normalize(self.mean, self.std)]
+        )
 
     def _copy_data(self, args):
         # Unpack arguments
@@ -313,7 +397,7 @@ class CTData(torch.utils.data.Dataset):
         else:
             paths = glob(os.path.join(path_to_osic_data_dir, pid + "*"))
         assert len(paths) in [1, 2, 3, 4], f"{pid} has {len(paths)} CT scans"
-        
+
         for path in paths:
             if os.path.exists(os.path.join(tmpfs_dir, os.path.basename(path))):
                 continue
@@ -325,13 +409,15 @@ class CTData(torch.utils.data.Dataset):
         if not os.path.exists(tmpfs_dir):
             os.mkdir(tmpfs_dir)
 
-        args = [(pid, path_to_osic_data_dir, path_to_lsut_data_dir, tmpfs_dir) for pid in pids]
+        args = [
+            (pid, path_to_osic_data_dir, path_to_lsut_data_dir, tmpfs_dir)
+            for pid in pids
+        ]
 
         # Use process_map from tqdm
         process_map(self._copy_data, args, chunksize=1)
 
         print("Done!")
-
 
     def __getitem__(self, index):
         """
@@ -348,14 +434,14 @@ class CTData(torch.utils.data.Dataset):
         if self.mode in ["train", "val"]:
             st_idx = np.random.randint(0, scan.shape[0] - self.num_slices)
             sequence = scan[st_idx : st_idx + self.num_slices]
-            sequence, msk = preprocess_sequence(sequence, mean=self.mean, std=self.std)
+            sequence, msk = preprocess_sequence(sequence)
             sample = {"sequence": sequence, "mask": msk}
             return self.transforms(sample)
 
         sequence, msk = [], []
         for i in range(0, scan.shape[0], self.num_slices):
             _seq = scan[i : i + self.num_slices]
-            _seq, _msk = preprocess_sequence(_seq, mean=self.mean, std=self.std)
+            _seq, _msk = preprocess_sequence(_seq)
             sequence.append(_seq)
             msk.append(_msk)
         if sequence[-1].shape[0] != self.num_slices:
@@ -377,8 +463,11 @@ class CTData(torch.utils.data.Dataset):
     def __len__(self):
         return len(self._paths)
 
+
 if __name__ == "__main__":
-    path_to_osic_data_dir = path_to_lsut_data_dir = "/home/ahmed/data/segmentations/osic_mar_23_unpadded/"
+    path_to_osic_data_dir = (
+        path_to_lsut_data_dir
+    ) = "/home/ahmed/data/segmentations/osic_mar_23_unpadded/"
     path_to_df = "ct_data.csv"
     mode = "train"
     num_slices = 16
@@ -396,11 +485,11 @@ if __name__ == "__main__":
         std,
         True,
         n,
-        seed)
+        seed,
+    )
     for i in range(len(dataset)):
         sample = dataset[i]
         show_sequence(sample["sequence"][0])
         plt.show()
         show_sequence(sample["mask"][0])
         plt.show()
-        
